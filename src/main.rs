@@ -6,9 +6,9 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::str::FromStr;
 
-const CSV_DATA: usize = 785;
+const CSV_DATA: usize = 784;
 
-fn train(data: Vec<f64>, path_to_neural: &OsString, count: usize) {
+fn train(data: Vec<f64>, answers: Vec<u8>, path_to_neural: &OsString) {
     let input_nodes = 784;
     let hidden_nodes = 800;
     let output_nodes = 10;
@@ -20,13 +20,12 @@ fn train(data: Vec<f64>, path_to_neural: &OsString, count: usize) {
     for _epoch in 0..epochs {
         println!("Epoch: {}", _epoch + 1);
 
-        for number in 0..count {
-            let index = number * CSV_DATA;
-            let inputs: Vec<f64> = data[index + 1..index + 785].to_vec();
+        for (idx, answer) in answers.iter().enumerate() {
+            let left = idx * CSV_DATA;
+            let inputs: Vec<f64> = data[left..left + CSV_DATA].to_vec();
 
             let mut targets = vec![0.1; output_nodes];
-            let answer = data[index];
-            targets[answer as usize] = 0.99;
+            targets[*answer as usize] = 0.99;
 
             net.train(inputs, targets);
         }
@@ -37,40 +36,38 @@ fn train(data: Vec<f64>, path_to_neural: &OsString, count: usize) {
     file.write_all(serialized.as_bytes()).unwrap();
 }
 
-fn test(data: Vec<f64>, path_to_neural: &OsString, count: usize) {
+fn test(data: Vec<f64>, answers: Vec<u8>, path_to_neural: &OsString) {
     let mut json_data = String::new();
-
     let mut file = File::open(path_to_neural).unwrap();
     file.read_to_string(&mut json_data).unwrap();
 
     let mut net: NeuralNet = serde_json::from_str(&json_data).unwrap();
 
     let mut ok: usize = 0;
-    for number in 0..count {
-        let answer_index = number * CSV_DATA;
-        let inputs: Vec<f64> = data[answer_index + 1..answer_index + 785].to_vec();
+    for (idx, answer) in answers.iter().enumerate() {
+        let left = idx * CSV_DATA;
+        let inputs: Vec<f64> = data[left..left + CSV_DATA].to_vec();
 
         let result = net.query(inputs);
 
-        let answer = data[answer_index];
         let max = result
-            .iter()
+            .into_iter()
             .enumerate()
-            .max_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
+            .max_by(|&(_, lhs), &(_, rhs)| lhs.partial_cmp(&rhs).unwrap())
             .unwrap();
 
-        if answer as usize == max.0 {
+        if *answer as usize == max.0 {
             ok += 1;
         }
     }
 
-    println!("{}", ok as f64 / count as f64 * 100.0);
+    println!("{}", ok as f64 / answers.len() as f64 * 100.0);
 }
 
 fn main() {
     let args: Vec<OsString> = std::env::args_os().collect();
 
-    let is_train = args[1] == "-t";
+    let is_train = args[1] == "train";
     let path_to_csv = &args[2];
     let path_to_width = &args[3];
 
@@ -85,16 +82,24 @@ fn main() {
     };
 
     let mut data = Vec::with_capacity(count * CSV_DATA);
+    let mut answers = Vec::with_capacity(count);
     for record in csv.records() {
-        for s in record.unwrap().iter() {
-            let value = f64::from_str(s).unwrap();
-
-            data.push(value / 255.0 * 0.99 + 0.01);
+        for (idx, val) in record.unwrap().iter().enumerate() {
+            match idx % (CSV_DATA + 1) == 0 {
+                true => {
+                    let value = u8::from_str(val).unwrap();
+                    answers.push(value);
+                }
+                false => {
+                    let value = f64::from_str(val).unwrap();
+                    data.push(value / 255.0 * 0.99 + 0.01);
+                }
+            }
         }
     }
 
     match is_train {
-        true => train(data, &path_to_width, count),
-        false => test(data, &path_to_width, count),
+        true => train(data, answers, &path_to_width),
+        false => test(data, answers, &path_to_width),
     }
 }
